@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#14161c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon/icon-192.png">
+<link rel="apple-touch-icon" href="icon/icon-192.png">
+<title>ブロック落とし</title>
+<style>
+:root{--bg:#14161c;--panel:#1d2029;--line:#2c3040;--text:#e6e8ef;--sub:#9aa0b4;--accent:#5fb0ff;--grid:#232633}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none !important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);overflow:hidden;
+  font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;user-select:none;-webkit-user-select:none;
+  touch-action:none;overscroll-behavior:none}
+.app{height:100%;display:flex;flex-direction:column;max-width:560px;margin:0 auto;
+  padding:calc(6px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom))}
+.top{display:flex;gap:6px;align-items:stretch}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+.lbl{font-size:10px;color:var(--sub);letter-spacing:.06em}
+.stats{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0 8px;align-content:center}
+.stats .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.15}
+.stats .score{grid-column:1/3}
+.stats .score .v{font-size:20px}
+.icon{width:44px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:20px;padding:0}
+.mid{flex:1;min-height:0;display:flex;justify-content:center;align-items:center;margin:6px 0;position:relative}
+.stage{position:relative;border:1px solid var(--line);border-radius:6px;padding:3px;background:var(--panel)}
+canvas{display:block}
+.over{position:absolute;inset:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;background:rgba(10,12,18,.84);border-radius:4px;text-align:center;padding:10px;overflow:auto}
+.over .big{font-size:24px;font-weight:700}
+.over .small{font-size:13px;color:var(--sub);line-height:1.7}
+button{font:inherit;color:var(--text);background:#2a2f40;border:1px solid #3a4058;border-radius:10px;cursor:pointer}
+button.main{background:var(--accent);border-color:var(--accent);color:#08121f;font-weight:700;font-size:17px;padding:10px 34px}
+ol.hs{margin:0;padding-left:26px;font-size:13px;line-height:1.7;text-align:left;font-variant-numeric:tabular-nums}
+ol.hs li.new{color:var(--accent);font-weight:700}
+.pad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.pad button{height:60px;font-size:24px;touch-action:none}
+.pad button small{display:block;font-size:10px;color:var(--sub);margin-top:-2px}
+.pad button.on{background:#3d4560;transform:scale(.96)}
+.pad .hard{background:#27425f;border-color:#35608c}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;z-index:9;touch-action:auto}
+.sheet .in{background:var(--panel);width:100%;max-width:560px;border-radius:14px 14px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+.sheet h3{margin:0 0 12px;font-size:16px}
+.row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);font-size:15px}
+.row select,.row input{font-size:16px}
+.row input[type=checkbox]{width:22px;height:22px}
+.sheet .foot{display:flex;gap:10px;margin-top:14px}
+.sheet .foot button{flex:1;padding:12px;font-size:15px}
+.ver{font-size:11px;color:var(--sub);margin-top:8px;text-align:right}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="box"><div class="lbl">HOLD</div><canvas id="hold" width="64" height="40"></canvas></div>
+    <div class="box stats">
+      <div class="score"><div class="lbl">SCORE</div><div class="v" id="score">0</div></div>
+      <div><div class="lbl">LEVEL</div><div class="v" id="level">1</div></div>
+      <div><div class="lbl">LINES</div><div class="v" id="lines">0</div></div>
+    </div>
+    <div class="box"><div class="lbl">NEXT</div><canvas id="next" width="112" height="40"></canvas></div>
+    <button class="icon" id="btn-pause" aria-label="一時停止">⏸</button>
+  </div>
+
+  <div class="mid" id="mid">
+    <div class="stage">
+      <canvas id="board"></canvas>
+      <div class="over" id="over">
+        <div class="big" id="over-title">ブロック落とし</div>
+        <div class="small" id="over-msg">下のボタンで動かします。盤をタップしても回ります</div>
+        <button class="main" id="btn-start">スタート</button>
+        <div class="small" id="over-hs-h">HIGH SCORE</div>
+        <ol class="hs" id="hs"></ol>
+        <button id="btn-cfg" style="padding:8px 16px;font-size:14px">⚙ 設定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pad">
+    <button data-a="hold">⇄<small>ホールド</small></button>
+    <button data-a="ccw">↺<small>左回転</small></button>
+    <button data-a="cw">↻<small>右回転</small></button>
+    <button data-a="hard" class="hard">⤓<small>一気に</small></button>
+    <button data-a="left">←</button>
+    <button data-a="down">↓</button>
+    <button data-a="right">→</button>
+    <button data-a="mute" id="btn-sound">🔊<small>音</small></button>
+  </div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="in">
+    <h3>設定</h3>
+    <div class="row">始めるレベル <select id="c-level"></select></div>
+    <div class="row">左右の連続移動が始まるまで <select id="c-das">
+      <option value="100">速い（0.10秒）</option><option value="150">ふつう（0.15秒）</option><option value="220">ゆっくり（0.22秒）</option></select></div>
+    <div class="row">落下地点の影 <input type="checkbox" id="c-ghost"></div>
+    <div class="row">音 <input type="checkbox" id="c-sound"></div>
+    <div class="row">振動 <input type="checkbox" id="c-vib"></div>
+    <div class="foot"><button id="c-clear">記録を消す</button><button class="main" id="c-ok">閉じる</button></div>
+    <div class="ver" id="ver"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const APP_VERSION = "1.0.0";
+const COLS = 10, ROWS = 20, HIDDEN = 2;
+const $ = id => document.getElementById(id);
+const CFG = { cell: 24, start_level: 1, das: 150, arr: 40, soft_drop: 35, sound: true, ghost: true, vibrate: true };
+const LS_CFG = "blockdrop_cfg", LS_HS = "blockdrop_scores";
+function lsGet(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } }
+function lsSet(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+Object.assign(CFG, lsGet(LS_CFG, {}));
+
+/* ---------- ブロックの形と色（色は独自の配色） ---------- */
+const SHAPES = {
+  I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  O: [[1,1],[1,1]],
+  T: [[0,1,0],[1,1,1],[0,0,0]],
+  S: [[0,1,1],[1,1,0],[0,0,0]],
+  Z: [[1,1,0],[0,1,1],[0,0,0]],
+  J: [[1,0,0],[1,1,1],[0,0,0]],
+  L: [[0,0,1],[1,1,1],[0,0,0]],
+};
+const COLORS = { I:"#4fc3c9", O:"#e8c547", T:"#b07be0", S:"#6cc36c", Z:"#e0685f", J:"#5b86e5", L:"#e89a4a" };
+const TYPES = Object.keys(SHAPES);
+
+function rotateCW(m){ const n=m.length; return m.map((r,y)=>r.map((_,x)=>m[n-1-x][y])); }
+const ROT = {};   // ROT[type][0..3]
+for (const t of TYPES){ ROT[t]=[SHAPES[t]]; for(let i=1;i<4;i++) ROT[t].push(rotateCW(ROT[t][i-1])); }
+
+/* 壁際の回転の逃がし方（一般的な回転規則の表） */
+const KICK_JLSTZ = {
+  "0>1":[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]], "1>0":[[0,0],[1,0],[1,-1],[0,2],[1,2]],
+  "1>2":[[0,0],[1,0],[1,-1],[0,2],[1,2]],     "2>1":[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+  "2>3":[[0,0],[1,0],[1,1],[0,-2],[1,-2]],    "3>2":[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
+  "3>0":[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],  "0>3":[[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+};
+const KICK_I = {
+  "0>1":[[0,0],[-2,0],[1,0],[-2,-1],[1,2]], "1>0":[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+  "1>2":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]], "2>1":[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
+  "2>3":[[0,0],[2,0],[-1,0],[2,1],[-1,-2]], "3>2":[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+  "3>0":[[0,0],[1,0],[-2,0],[1,-2],[-2,1]], "0>3":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+};
+
+/* ---------- 状態 ---------- */
+let grid, cur, holdType, holdUsed, queue, bag;
+let score, lines, level, state = "title";   // title | play | pause | over
+let fallAcc, lockTimer, lockResets, lastTime;
+let clearing = null;                          // 消える行の演出
+let hiscores = [], lastRank = -1;
+
+const bd = $("board"), ctx = bd.getContext("2d");
+const hc = $("hold").getContext("2d"), nc = $("next").getContext("2d");
+
+
+/* ---------- 乱数（7種を1組にして順に出す） ---------- */
+function nextType(){
+  if (!bag || !bag.length){
+    bag = TYPES.slice();
+    for (let i=bag.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [bag[i],bag[j]]=[bag[j],bag[i]]; }
+  }
+  return bag.pop();
+}
+function spawn(type){
+  const m = ROT[type][0];
+  const p = { type, r:0, x: Math.floor((COLS - m.length)/2), y: type==="I" ? HIDDEN-1 : HIDDEN };
+  if (collide(p.x, p.y, p.r, p)) { p.y--; }
+  if (collide(p.x, p.y, p.r, p)) { gameOver(); return null; }
+  return p;
+}
+function take(){
+  while (queue.length < 4) queue.push(nextType());
+  const t = queue.shift(); queue.push(nextType());
+  cur = spawn(t); holdUsed = false; lockTimer = 0; lockResets = 0; fallAcc = 0;
+}
+
+/* ---------- 当たり判定 ---------- */
+function cells(p, x=p.x, y=p.y, r=p.r){
+  const out=[], m=ROT[p.type][r];
+  for (let j=0;j<m.length;j++) for (let i=0;i<m.length;i++) if (m[j][i]) out.push([x+i, y+j]);
+  return out;
+}
+function collide(x, y, r, p){
+  for (const [cx,cy] of cells(p,x,y,r)){
+    if (cx<0 || cx>=COLS || cy>=ROWS+HIDDEN) return true;
+    if (cy>=0 && grid[cy][cx]) return true;
+  }
+  return false;
+}
+function onGround(){ return collide(cur.x, cur.y+1, cur.r, cur); }
+
+/* ---------- 操作 ---------- */
+function touchLock(){   // 接地中に動かしたら固定までの猶予をやり直す（15回まで）
+  if (onGround() && lockResets < 15){ lockTimer = 0; lockResets++; }
+}
+function move(dx){
+  if (!cur || collide(cur.x+dx, cur.y, cur.r, cur)) return false;
+  cur.x += dx; touchLock(); snd("move"); return true;
+}
+function rotate(dir){
+  if (!cur || cur.type==="O") return;
+  const from = cur.r, to = (cur.r + (dir>0?1:3)) % 4;
+  const tbl = (cur.type==="I" ? KICK_I : KICK_JLSTZ)[from+">"+to];
+  for (const [kx,ky] of tbl){
+    const nx = cur.x+kx, ny = cur.y-ky;   // 表は上向きが正
+    if (!collide(nx, ny, to, cur)){ cur.x=nx; cur.y=ny; cur.r=to; touchLock(); snd("rot"); return; }
+  }
+}
+function softDrop(){
+  if (!cur) return;
+  if (!collide(cur.x, cur.y+1, cur.r, cur)){ cur.y++; score += 1; fallAcc = 0; updHud(); }
+}
+function hardDrop(){
+  if (!cur) return;
+  let n=0; while (!collide(cur.x, cur.y+1, cur.r, cur)){ cur.y++; n++; }
+  score += n*2; snd("drop"); lock();
+}
+function hold(){
+  if (!cur || holdUsed) return;
+  const t = cur.type;
+  if (holdType){ const h = holdType; holdType = t; cur = spawn(h); lockTimer=0; lockResets=0; fallAcc=0; }
+  else { holdType = t; take(); }
+  holdUsed = true; snd("rot"); drawSide();
+}
+
+/* ---------- 固定・行消し ---------- */
+function lock(){
+  let above = true;
+  for (const [x,y] of cells(cur)){ if (y>=0) grid[y][x] = cur.type; if (y>=HIDDEN) above = false; }
+  cur = null;
+  if (above){ gameOver(); return; }   // 全部が見えない段で固定＝積み上がり
+  const full = [];
+  for (let y=0;y<ROWS+HIDDEN;y++) if (grid[y].every(v=>v)) full.push(y);
+  if (full.length){
+    clearing = { rows: full, t: 0 };
+    snd(full.length===4 ? "four" : "clear"); buzz(full.length===4?60:25);
+  } else {
+    snd("lock"); take(); drawSide();
+  }
+  updHud();
+}
+function finishClear(){
+  const n = clearing.rows.length;
+  for (const y of clearing.rows){ grid.splice(y,1); grid.unshift(Array(COLS).fill(null)); }
+  clearing = null;
+  score += [0,100,300,500,800][n] * level;
+  lines += n;
+  const nl = Math.max(CFG.start_level, Math.floor(lines/10)+1);
+  if (nl > level){ level = nl; flash("level"); snd("level"); }
+  flash("score"); updHud(); take(); drawSide();
+}
+
+/* ---------- 落ちる速さ（レベルが上がるほど速い） ---------- */
+function gravityMs(){
+  const s = Math.pow(0.8 - (level-1)*0.007, level-1);
+  return Math.max(16, s*1000);
+}
+
+/* ---------- 入力（押しっぱなしの連射つき） ---------- */
+const held = { left:false, right:false, down:false };
+let dasDir = 0, dasT = 0, arrT = 0, softT = 0;
+function press(a){
+  audioInit();
+  if (a==="start"){ if (state==="title"||state==="over") start(); else if (state==="pause") pause(); return; }
+  if (a==="pause"){ pause(); return; }
+  if (a==="mute"){ toggleSound(); return; }
+  if (state!=="play" || clearing){ if (a==="left"||a==="right"||a==="down") held[a]=true; return; }
+  switch(a){
+    case "left": case "right":
+      if (!held[a]){ held[a]=true; dasDir = a==="left"?-1:1; dasT=0; arrT=0; move(dasDir); } break;
+    case "down": if (!held.down){ held.down=true; softT=0; softDrop(); } break;
+    case "cw": rotate(1); break;
+    case "ccw": rotate(-1); break;
+    case "hard": hardDrop(); buzz(15); break;
+    case "hold": hold(); break;
+  }
+}
+function release(a){
+  if (a==="left"||a==="right"){
+    held[a]=false;
+    const other = a==="left"?"right":"left";
+    dasDir = held[other] ? (other==="left"?-1:1) : 0; dasT=0; arrT=0;
+  }
+  if (a==="down") held.down=false;
+}
+function releaseAll(){ held.left=held.right=held.down=false; dasDir=0; }
+/* 画面のボタン（指を離す・指が外れる・中断のどれでも離したことにする） */
+document.querySelectorAll("[data-a]").forEach(el=>{
+  const a = el.dataset.a;
+  el.addEventListener("pointerdown", e=>{ e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("on"); press(a); });
+  const up = e=>{ el.classList.remove("on"); release(a); };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); el.addEventListener("lostpointercapture", up);
+  el.addEventListener("contextmenu", e=>e.preventDefault());
+});
+/* 盤をタップ＝右回転 */
+bd.addEventListener("pointerdown", e=>{ e.preventDefault(); if (state==="play") press("cw"); });
+/* キーボード（Bluetooth キーボードやPCのブラウザでも遊べるように） */
+const KEY = { ArrowLeft:"left", ArrowRight:"right", ArrowDown:"down", ArrowUp:"cw", x:"cw", z:"ccw", " ":"hard",
+  c:"hold", Shift:"hold", p:"pause", Escape:"pause", m:"mute", Enter:"start" };
+document.addEventListener("keydown", e=>{ const a=KEY[e.key]; if(!a) return; e.preventDefault(); if (e.repeat && a!=="left"&&a!=="right"&&a!=="down") return; if (!e.repeat) press(a); });
+document.addEventListener("keyup", e=>{ const a=KEY[e.key]; if(a) release(a); });
+/* 別のアプリへ移ったら止める */
+document.addEventListener("visibilitychange", ()=>{ releaseAll(); if (document.hidden && state==="play") pause(); });
+window.addEventListener("blur", ()=>{ releaseAll(); });
+function buzz(ms){ try{ if (CFG.vibrate && navigator.vibrate) navigator.vibrate(ms); }catch(e){} }
+
+/* ---------- 主ループ ---------- */
+function loop(t){
+  const dt = Math.min(100, t - (lastTime||t)); lastTime = t;
+  if (state==="play"){
+    if (clearing){ clearing.t += dt; if (clearing.t >= 220) finishClear(); }
+    else if (cur){
+      if (dasDir){
+        dasT += dt;
+        if (dasT >= CFG.das){
+          arrT += dt;
+          const step = Math.max(1, CFG.arr);
+          while (arrT >= step){ arrT -= step; if (!move(dasDir)) break; if (CFG.arr<=0) { while(move(dasDir)); break; } }
+        }
+      }
+      if (held.down){ softT += dt; while (softT >= CFG.soft_drop){ softT -= CFG.soft_drop; softDrop(); } }
+      if (onGround()){
+        lockTimer += dt;
+        if (lockTimer >= 500) lock();
+      } else {
+        lockTimer = 0;
+        fallAcc += dt;
+        const g = gravityMs();
+        while (fallAcc >= g && cur && !onGround()){ fallAcc -= g; cur.y++; }
+      }
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+
+/* ---------- 描画 ---------- */
+function block(c, x, y, s, color, alpha=1){
+  c.globalAlpha = alpha;
+  c.fillStyle = color; c.fillRect(x+1, y+1, s-2, s-2);
+  c.fillStyle = "rgba(255,255,255,.22)"; c.fillRect(x+1, y+1, s-2, Math.max(2, s*0.18));
+  c.fillStyle = "rgba(0,0,0,.22)"; c.fillRect(x+1, y+s-1-Math.max(2,s*0.14), s-2, Math.max(2,s*0.14));
+  c.globalAlpha = 1;
+}
+function draw(){
+  const s = CFG.cell;
+  ctx.fillStyle = "#171a22"; ctx.fillRect(0,0,bd.width,bd.height);
+  ctx.strokeStyle = "#232633"; ctx.lineWidth = 1;
+  for (let x=1;x<COLS;x++){ ctx.beginPath(); ctx.moveTo(x*s+.5,0); ctx.lineTo(x*s+.5,bd.height); ctx.stroke(); }
+  for (let y=1;y<ROWS;y++){ ctx.beginPath(); ctx.moveTo(0,y*s+.5); ctx.lineTo(bd.width,y*s+.5); ctx.stroke(); }
+  if (!grid) return;
+  for (let y=HIDDEN;y<ROWS+HIDDEN;y++) for (let x=0;x<COLS;x++){
+    const v = grid[y][x]; if (!v) continue;
+    if (clearing && clearing.rows.includes(y)){
+      ctx.fillStyle = `rgba(255,255,255,${1-clearing.t/220})`; ctx.fillRect(x*s, (y-HIDDEN)*s, s, s); continue;
+    }
+    block(ctx, x*s, (y-HIDDEN)*s, s, COLORS[v]);
+  }
+  if (cur){
+    if (CFG.ghost){
+      let gy = cur.y; while (!collide(cur.x, gy+1, cur.r, cur)) gy++;
+      for (const [x,y] of cells(cur, cur.x, gy)) if (y>=HIDDEN){
+        ctx.strokeStyle = COLORS[cur.type]; ctx.globalAlpha=.55; ctx.lineWidth=2;
+        ctx.strokeRect(x*s+3, (y-HIDDEN)*s+3, s-6, s-6); ctx.globalAlpha=1;
+      }
+    }
+    const fade = onGround() ? 1 - Math.min(lockTimer/500,1)*0.35 : 1;
+    for (const [x,y] of cells(cur)) if (y>=HIDDEN) block(ctx, x*s, (y-HIDDEN)*s, s, COLORS[cur.type], fade);
+  }
+}
+function mini(c, type, cx, cy, s, dim){
+  if (!type) return;
+  const m = SHAPES[type];
+  let minx=9,maxx=-1,miny=9,maxy=-1;
+  m.forEach((r,y)=>r.forEach((v,x)=>{ if(v){minx=Math.min(minx,x);maxx=Math.max(maxx,x);miny=Math.min(miny,y);maxy=Math.max(maxy,y);} }));
+  const w=(maxx-minx+1)*s, h=(maxy-miny+1)*s;
+  m.forEach((r,y)=>r.forEach((v,x)=>{ if(v) block(c, cx-w/2+(x-minx)*s, cy-h/2+(y-miny)*s, s, COLORS[type], dim?0.35:1); }));
+}
+function drawSide(){
+  hc.clearRect(0,0,64,40); mini(hc, holdType, 32, 20, 12, holdUsed);
+  nc.clearRect(0,0,112,40);
+  if (queue) queue.slice(0,3).forEach((t,i)=>mini(nc, t, 20+i*36, 20, i===0?9:7));
+}
+function updHud(){ $("score").textContent = score.toLocaleString(); $("level").textContent = level; $("lines").textContent = lines; }
+function flash(){}
+
+/* 盤の大きさを画面に合わせる */
+function sizeBoard(){
+  const mid = $("mid"), W = mid.clientWidth - 10, H = mid.clientHeight - 10;
+  CFG.cell = Math.max(12, Math.floor(Math.min(W/COLS, H/ROWS)));
+  bd.width = COLS*CFG.cell; bd.height = ROWS*CFG.cell;
+  draw();
+}
+window.addEventListener("resize", sizeBoard);
+
+/* ---------- 進行 ---------- */
+function start(){
+  grid = Array.from({length:ROWS+HIDDEN}, ()=>Array(COLS).fill(null));
+  queue = []; bag = null; holdType = null; holdUsed = false; clearing = null;
+  score = 0; lines = 0; level = CFG.start_level; lastRank = -1;
+  releaseAll();
+  state = "play"; $("over").hidden = true; $("btn-pause").textContent = "⏸";
+  audioInit(); take(); drawSide(); updHud();
+}
+function pause(){
+  if (state==="play"){ state="pause"; showOver("一時停止", "［つづける］で再開します", "つづける"); $("btn-pause").textContent="▶"; }
+  else if (state==="pause"){ state="play"; $("over").hidden=true; $("btn-pause").textContent="⏸"; lastTime=0; }
+}
+function gameOver(){
+  state = "over"; cur = null; snd("over"); buzz(120);
+  const d = new Date(), z = n=>String(n).padStart(2,"0");
+  const rec = { score, lines, level, date: `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}` };
+  let list = lsGet(LS_HS, []); list.push(rec); list.sort((a,b)=>b.score-a.score); list = list.slice(0,10);
+  lastRank = list.indexOf(rec); lsSet(LS_HS, list); hiscores = list;
+  const msg = lastRank>=0 ? `ハイスコア ${lastRank+1}位！<br>` : "";
+  showOver("ゲームオーバー", `${msg}スコア ${score.toLocaleString()}　ライン ${lines}`, "もう一度");
+}
+function showOver(t, m, btn){
+  $("over-title").textContent=t; $("over-msg").innerHTML=m; $("btn-start").textContent=btn||"スタート";
+  renderHs(); $("over").hidden=false;
+}
+function renderHs(){
+  const ol = $("hs"); ol.innerHTML = "";
+  $("over-hs-h").hidden = !hiscores.length;
+  hiscores.slice(0,10).forEach((h,i)=>{
+    const li = document.createElement("li");
+    li.textContent = `${h.score.toLocaleString()}　L${h.lines}　${h.date.slice(5)}`;
+    if (i===lastRank) li.className = "new";
+    ol.appendChild(li);
+  });
+}
+
+/* ---------- 音（合成音） ---------- */
+let AC = null;
+function audioInit(){ if (!AC && CFG.sound){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if (AC && AC.state==="suspended") AC.resume(); }
+function tone(f, d, type="square", v=.05, f2){
+  if (!AC || !CFG.sound) return;
+  const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t+d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t+d);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t+d+.02);
+}
+function snd(k){
+  switch(k){
+    case "move": tone(220,.03,"square",.02); break;
+    case "rot":  tone(440,.04,"square",.025); break;
+    case "lock": tone(140,.06,"triangle",.08); break;
+    case "drop": tone(300,.08,"triangle",.08,90); break;
+    case "clear": [523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,.09,"square",.04),i*55)); break;
+    case "four": [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.12,"square",.05),i*60)); break;
+    case "level": [784,988,1175].forEach((f,i)=>setTimeout(()=>tone(f,.1,"triangle",.06),i*80)); break;
+    case "over": [392,330,262,196].forEach((f,i)=>setTimeout(()=>tone(f,.22,"triangle",.07),i*180)); break;
+  }
+}
+function saveCfg(){ const {start_level,das,sound,ghost,vibrate} = CFG; lsSet(LS_CFG, {start_level,das,sound,ghost,vibrate}); }
+function showSound(){ $("btn-sound").firstChild.textContent = CFG.sound ? "🔊" : "🔇"; }
+function toggleSound(){ CFG.sound = !CFG.sound; if (CFG.sound) audioInit(); showSound(); saveCfg(); }
+
+/* ---------- 設定 ---------- */
+for (let i=1;i<=15;i++){ const o=document.createElement("option"); o.value=i; o.textContent="レベル "+i; $("c-level").appendChild(o); }
+function openCfg(){
+  $("c-level").value = CFG.start_level; $("c-das").value = String(CFG.das);
+  $("c-ghost").checked = CFG.ghost; $("c-sound").checked = CFG.sound; $("c-vib").checked = CFG.vibrate;
+  $("ver").textContent = "v" + APP_VERSION; $("sheet").hidden = false;
+}
+$("c-ok").addEventListener("click", ()=>{
+  CFG.start_level = +$("c-level").value; CFG.das = +$("c-das").value;
+  CFG.ghost = $("c-ghost").checked; CFG.sound = $("c-sound").checked; CFG.vibrate = $("c-vib").checked;
+  saveCfg(); showSound(); $("sheet").hidden = true;
+});
+$("c-clear").addEventListener("click", ()=>{
+  if (!confirm("ハイスコアの記録をすべて消します。よろしいですか？")) return;
+  lsSet(LS_HS, []); hiscores = []; lastRank = -1; renderHs();
+});
+$("sheet").addEventListener("pointerdown", e=>{ if (e.target.id==="sheet") $("c-ok").click(); });
+
+$("btn-start").addEventListener("click", ()=>press("start"));
+$("btn-pause").addEventListener("click", ()=>{ if (state==="play"||state==="pause") pause(); });
+$("btn-cfg").addEventListener("click", openCfg);
+
+/* ---------- 起動 ---------- */
+hiscores = lsGet(LS_HS, []);
+CFG.start_level = Math.min(15, Math.max(1, CFG.start_level|0));
+showSound(); renderHs(); sizeBoard(); drawSide();
+requestAnimationFrame(loop);
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>
