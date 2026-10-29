@@ -16,7 +16,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);overflow:h
   font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;user-select:none;-webkit-user-select:none;
   touch-action:none;overscroll-behavior:none}
 .app{height:100%;display:flex;flex-direction:column;max-width:560px;margin:0 auto;
-  padding:calc(6px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom))}
+  padding:calc(6px + env(safe-area-inset-top)) 8px calc(30px + env(safe-area-inset-bottom))}
 .top{display:flex;gap:6px;align-items:stretch}
 .box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
 .lbl{font-size:10px;color:var(--sub);letter-spacing:.06em}
@@ -41,6 +41,8 @@ ol.hs li.new{color:var(--accent);font-weight:700}
 .pad button small{display:block;font-size:10px;color:var(--sub);margin-top:-2px}
 .pad button.on{background:#3d4560;transform:scale(.96)}
 .pad .hard{background:#27425f;border-color:#35608c}
+.pad .hard.armed{background:#5fb0ff;border-color:#9fd0ff;color:#08121f}
+.pad .hard.armed small{color:#08121f}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;z-index:9;touch-action:auto}
 .sheet .in{background:var(--panel);width:100%;max-width:560px;border-radius:14px 14px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
 .sheet h3{margin:0 0 12px;font-size:16px}
@@ -70,7 +72,7 @@ ol.hs li.new{color:var(--accent);font-weight:700}
       <canvas id="board"></canvas>
       <div class="over" id="over">
         <div class="big" id="over-title">ブロック落とし</div>
-        <div class="small" id="over-msg">下のボタンで動かします。盤をタップしても回ります</div>
+        <div class="small" id="over-msg">下のボタンで動かします。盤をタップしても回ります<br>「一気に」は2回続けてタップ</div>
         <button class="main" id="btn-start">スタート</button>
         <div class="small" id="over-hs-h">HIGH SCORE</div>
         <ol class="hs" id="hs"></ol>
@@ -83,11 +85,11 @@ ol.hs li.new{color:var(--accent);font-weight:700}
     <button data-a="hold">⇄<small>ホールド</small></button>
     <button data-a="ccw">↺<small>左回転</small></button>
     <button data-a="cw">↻<small>右回転</small></button>
-    <button data-a="hard" class="hard">⤓<small>一気に</small></button>
+    <button data-a="hard" class="hard" id="btn-hard">⤓<small>2回で一気に</small></button>
     <button data-a="left">←</button>
     <button data-a="down">↓</button>
     <button data-a="right">→</button>
-    <button data-a="mute" id="btn-sound">🔊<small>音</small></button>
+    <button data-a="skip">⏭<small>スキップ</small></button>
   </div>
 </div>
 
@@ -107,7 +109,7 @@ ol.hs li.new{color:var(--accent);font-weight:700}
 
 <script>
 "use strict";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.2.0";
 const COLS = 10, ROWS = 20, HIDDEN = 2;
 const $ = id => document.getElementById(id);
 const CFG = { cell: 24, start_level: 1, das: 150, arr: 40, soft_drop: 35, sound: true, ghost: true, vibrate: true };
@@ -153,6 +155,9 @@ let score, lines, level, state = "title";   // title | play | pause | over
 let fallAcc, lockTimer, lockResets, lastTime;
 let clearing = null;                          // 消える行の演出
 let hiscores = [], lastRank = -1;
+let skips = 0;                                 // このゲームでスキップした回数
+let downLock = false;                         // 新しいブロックが出たら、↓は一度離すまで効かない
+let hardArmT = -1e9, hardArmPiece = null;     // 「一気に」の1回目を押した時刻と、そのときのブロック
 
 const bd = $("board"), ctx = bd.getContext("2d");
 const hc = $("hold").getContext("2d"), nc = $("next").getContext("2d");
@@ -177,6 +182,7 @@ function take(){
   while (queue.length < 4) queue.push(nextType());
   const t = queue.shift(); queue.push(nextType());
   cur = spawn(t); holdUsed = false; lockTimer = 0; lockResets = 0; fallAcc = 0;
+  if (held.down) downLock = true; disarmHard();
 }
 
 /* ---------- 当たり判定 ---------- */
@@ -220,10 +226,15 @@ function hardDrop(){
   let n=0; while (!collide(cur.x, cur.y+1, cur.r, cur)){ cur.y++; n++; }
   score += n*2; snd("drop"); lock();
 }
+/* スキップ：今のブロックを捨てて次を出す（回数制限・減点なし。回数は記録に残す） */
+function skip(){
+  if (!cur) return;
+  skips++; snd("rot"); buzz(10); take(); drawSide();
+}
 function hold(){
   if (!cur || holdUsed) return;
   const t = cur.type;
-  if (holdType){ const h = holdType; holdType = t; cur = spawn(h); lockTimer=0; lockResets=0; fallAcc=0; }
+  if (holdType){ const h = holdType; holdType = t; cur = spawn(h); lockTimer=0; lockResets=0; fallAcc=0; if (held.down) downLock = true; disarmHard(); }
   else { holdType = t; take(); }
   holdUsed = true; snd("rot"); drawSide();
 }
@@ -273,11 +284,13 @@ function press(a){
   switch(a){
     case "left": case "right":
       if (!held[a]){ held[a]=true; dasDir = a==="left"?-1:1; dasT=0; arrT=0; move(dasDir); } break;
-    case "down": if (!held.down){ held.down=true; softT=0; softDrop(); } break;
+    case "down": if (!held.down){ held.down=true; downLock=false; softT=0; softDrop(); } break;
     case "cw": rotate(1); break;
     case "ccw": rotate(-1); break;
     case "hard": hardDrop(); buzz(15); break;
+    case "hard2": hardTap(); break;
     case "hold": hold(); break;
+    case "skip": skip(); break;
   }
 }
 function release(a){
@@ -286,12 +299,21 @@ function release(a){
     const other = a==="left"?"right":"left";
     dasDir = held[other] ? (other==="left"?-1:1) : 0; dasT=0; arrT=0;
   }
-  if (a==="down") held.down=false;
+  if (a==="down"){ held.down=false; downLock=false; }
 }
-function releaseAll(){ held.left=held.right=held.down=false; dasDir=0; }
+/* 「一気に」は画面のボタンでは2回続けてタップしたときだけ（0.35秒以内・同じブロック） */
+const HARD_GAP = 350;
+function hardTap(){
+  const now = performance.now();
+  if (cur && hardArmPiece === cur && now - hardArmT <= HARD_GAP){ disarmHard(); hardDrop(); buzz(15); return; }
+  hardArmT = now; hardArmPiece = cur; $("btn-hard").classList.add("armed"); buzz(5);
+  clearTimeout(hardTap.tm); hardTap.tm = setTimeout(disarmHard, HARD_GAP);
+}
+function disarmHard(){ hardArmT = -1e9; hardArmPiece = null; const b = $("btn-hard"); if (b) b.classList.remove("armed"); }
+function releaseAll(){ held.left=held.right=held.down=false; dasDir=0; downLock=false; disarmHard(); }
 /* 画面のボタン（指を離す・指が外れる・中断のどれでも離したことにする） */
 document.querySelectorAll("[data-a]").forEach(el=>{
-  const a = el.dataset.a;
+  const a = el.dataset.a === "hard" ? "hard2" : el.dataset.a;   // 画面の「一気に」は2回タップ式
   el.addEventListener("pointerdown", e=>{ e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("on"); press(a); });
   const up = e=>{ el.classList.remove("on"); release(a); };
   el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); el.addEventListener("lostpointercapture", up);
@@ -301,12 +323,28 @@ document.querySelectorAll("[data-a]").forEach(el=>{
 bd.addEventListener("pointerdown", e=>{ e.preventDefault(); if (state==="play") press("cw"); });
 /* キーボード（Bluetooth キーボードやPCのブラウザでも遊べるように） */
 const KEY = { ArrowLeft:"left", ArrowRight:"right", ArrowDown:"down", ArrowUp:"cw", x:"cw", z:"ccw", " ":"hard",
-  c:"hold", Shift:"hold", p:"pause", Escape:"pause", m:"mute", Enter:"start" };
+  c:"hold", Shift:"hold", s:"skip", p:"pause", Escape:"pause", m:"mute", Enter:"start" };
 document.addEventListener("keydown", e=>{ const a=KEY[e.key]; if(!a) return; e.preventDefault(); if (e.repeat && a!=="left"&&a!=="right"&&a!=="down") return; if (!e.repeat) press(a); });
 document.addEventListener("keyup", e=>{ const a=KEY[e.key]; if(a) release(a); });
 /* 別のアプリへ移ったら止める */
 document.addEventListener("visibilitychange", ()=>{ releaseAll(); if (document.hidden && state==="play") pause(); });
 window.addEventListener("blur", ()=>{ releaseAll(); });
+/* ---------- 遊んでいる間は画面端のスワイプで他へ行きにくくする ----------
+   ・全画面（没入モード）：端からのスワイプは1回目で帯が出るだけになる
+   ・戻る操作：アプリを閉じずに一時停止にする
+   ⏸ で一時停止すると全画面を解き、ふつうの操作に戻る */
+function lockScreen(){
+  try{
+    const de = document.documentElement;
+    if (!document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({ navigationUI:"hide" }).catch(()=>{});
+  }catch(e){}
+  try{ if (!(history.state && history.state.bd)) history.pushState({ bd:1 }, ""); }catch(e){}
+}
+function unlockScreen(){
+  try{ if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{}); }catch(e){}
+}
+window.addEventListener("popstate", ()=>{ if (state==="play") pause(); });
+document.addEventListener("fullscreenchange", ()=>setTimeout(sizeBoard, 50));
 function buzz(ms){ try{ if (CFG.vibrate && navigator.vibrate) navigator.vibrate(ms); }catch(e){} }
 
 /* ---------- 主ループ ---------- */
@@ -323,7 +361,7 @@ function loop(t){
           while (arrT >= step){ arrT -= step; if (!move(dasDir)) break; if (CFG.arr<=0) { while(move(dasDir)); break; } }
         }
       }
-      if (held.down){ softT += dt; while (softT >= CFG.soft_drop){ softT -= CFG.soft_drop; softDrop(); } }
+      if (held.down && !downLock){ softT += dt; while (softT >= CFG.soft_drop){ softT -= CFG.soft_drop; softDrop(); } }
       if (onGround()){
         lockTimer += dt;
         if (lockTimer >= 500) lock();
@@ -403,23 +441,23 @@ window.addEventListener("resize", sizeBoard);
 function start(){
   grid = Array.from({length:ROWS+HIDDEN}, ()=>Array(COLS).fill(null));
   queue = []; bag = null; holdType = null; holdUsed = false; clearing = null;
-  score = 0; lines = 0; level = CFG.start_level; lastRank = -1;
+  score = 0; lines = 0; level = CFG.start_level; lastRank = -1; skips = 0;
   releaseAll();
   state = "play"; $("over").hidden = true; $("btn-pause").textContent = "⏸";
-  audioInit(); take(); drawSide(); updHud();
+  audioInit(); take(); drawSide(); updHud(); lockScreen();
 }
 function pause(){
-  if (state==="play"){ state="pause"; showOver("一時停止", "［つづける］で再開します", "つづける"); $("btn-pause").textContent="▶"; }
-  else if (state==="pause"){ state="play"; $("over").hidden=true; $("btn-pause").textContent="⏸"; lastTime=0; }
+  if (state==="play"){ state="pause"; releaseAll(); showOver("一時停止", "［つづける］で再開します<br>（止めている間は他のアプリへ切り替えられます）", "つづける"); $("btn-pause").textContent="▶"; unlockScreen(); }
+  else if (state==="pause"){ state="play"; $("over").hidden=true; $("btn-pause").textContent="⏸"; lastTime=0; lockScreen(); }
 }
 function gameOver(){
-  state = "over"; cur = null; snd("over"); buzz(120);
+  state = "over"; cur = null; snd("over"); buzz(120); unlockScreen();
   const d = new Date(), z = n=>String(n).padStart(2,"0");
-  const rec = { score, lines, level, date: `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}` };
+  const rec = { score, lines, level, skips, date: `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}` };
   let list = lsGet(LS_HS, []); list.push(rec); list.sort((a,b)=>b.score-a.score); list = list.slice(0,10);
   lastRank = list.indexOf(rec); lsSet(LS_HS, list); hiscores = list;
   const msg = lastRank>=0 ? `ハイスコア ${lastRank+1}位！<br>` : "";
-  showOver("ゲームオーバー", `${msg}スコア ${score.toLocaleString()}　ライン ${lines}`, "もう一度");
+  showOver("ゲームオーバー", `${msg}スコア ${score.toLocaleString()}　ライン ${lines}${skips?"　スキップ "+skips:""}`, "もう一度");
 }
 function showOver(t, m, btn){
   $("over-title").textContent=t; $("over-msg").innerHTML=m; $("btn-start").textContent=btn||"スタート";
@@ -430,7 +468,7 @@ function renderHs(){
   $("over-hs-h").hidden = !hiscores.length;
   hiscores.slice(0,10).forEach((h,i)=>{
     const li = document.createElement("li");
-    li.textContent = `${h.score.toLocaleString()}　L${h.lines}　${h.date.slice(5)}`;
+    li.textContent = `${h.score.toLocaleString()}　L${h.lines}${h.skips?"　S"+h.skips:""}　${h.date.slice(5)}`;
     if (i===lastRank) li.className = "new";
     ol.appendChild(li);
   });
@@ -460,7 +498,7 @@ function snd(k){
   }
 }
 function saveCfg(){ const {start_level,das,sound,ghost,vibrate} = CFG; lsSet(LS_CFG, {start_level,das,sound,ghost,vibrate}); }
-function showSound(){ $("btn-sound").firstChild.textContent = CFG.sound ? "🔊" : "🔇"; }
+function showSound(){}
 function toggleSound(){ CFG.sound = !CFG.sound; if (CFG.sound) audioInit(); showSound(); saveCfg(); }
 
 /* ---------- 設定 ---------- */

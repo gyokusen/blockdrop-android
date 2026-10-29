@@ -1,6 +1,6 @@
 // ブロック落とし — オフラインでも遊べるように取っておく
 // index.html は毎回まず取りに行き（新しい版をすぐ届けるため）、つながらないときだけ控えを使う
-const CACHE = "bd-v1";
+const CACHE = "bd-v2";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon/icon-192.png", "icon/icon-512.png", "icon/icon-maskable-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => {

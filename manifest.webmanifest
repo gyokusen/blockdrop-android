@@ -3,7 +3,7 @@
   "short_name": "ブロック落とし",
   "start_url": "./",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "portrait",
   "background_color": "#14161c",
   "theme_color": "#14161c",
