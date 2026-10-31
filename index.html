@@ -109,7 +109,7 @@ ol.hs li.new{color:var(--accent);font-weight:700}
 
 <script>
 "use strict";
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const COLS = 10, ROWS = 20, HIDDEN = 2;
 const $ = id => document.getElementById(id);
 const CFG = { cell: 24, start_level: 1, das: 150, arr: 40, soft_drop: 35, sound: true, ghost: true, vibrate: true };
@@ -332,17 +332,20 @@ window.addEventListener("blur", ()=>{ releaseAll(); });
 /* ---------- 遊んでいる間は画面端のスワイプで他へ行きにくくする ----------
    ・全画面（没入モード）：端からのスワイプは1回目で帯が出るだけになる
    ・戻る操作：アプリを閉じずに一時停止にする
-   ⏸ で一時停止すると全画面を解き、ふつうの操作に戻る */
+   全画面に入るのは起動して最初の1回だけ（入るたびに Chrome がお知らせの帯を出すため、途中で解いたり入り直したりしない）。
+   ホーム画面のアイコンから全画面で起動しているときは、最初から全画面なので何もしない */
+let fsTried = false;
 function lockScreen(){
   try{
     const de = document.documentElement;
-    if (!document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({ navigationUI:"hide" }).catch(()=>{});
+    const appFs = window.matchMedia && matchMedia("(display-mode: fullscreen)").matches;
+    if (!fsTried && !appFs && !document.fullscreenElement && de.requestFullscreen){
+      fsTried = true; de.requestFullscreen({ navigationUI:"hide" }).catch(()=>{});
+    }
   }catch(e){}
   try{ if (!(history.state && history.state.bd)) history.pushState({ bd:1 }, ""); }catch(e){}
 }
-function unlockScreen(){
-  try{ if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{}); }catch(e){}
-}
+function unlockScreen(){}   // 途中では全画面を解かない（v1.2.1）
 window.addEventListener("popstate", ()=>{ if (state==="play") pause(); });
 document.addEventListener("fullscreenchange", ()=>setTimeout(sizeBoard, 50));
 function buzz(ms){ try{ if (CFG.vibrate && navigator.vibrate) navigator.vibrate(ms); }catch(e){} }
@@ -447,7 +450,7 @@ function start(){
   audioInit(); take(); drawSide(); updHud(); lockScreen();
 }
 function pause(){
-  if (state==="play"){ state="pause"; releaseAll(); showOver("一時停止", "［つづける］で再開します<br>（止めている間は他のアプリへ切り替えられます）", "つづける"); $("btn-pause").textContent="▶"; unlockScreen(); }
+  if (state==="play"){ state="pause"; releaseAll(); showOver("一時停止", "［つづける］で再開します", "つづける"); $("btn-pause").textContent="▶"; unlockScreen(); }
   else if (state==="pause"){ state="play"; $("over").hidden=true; $("btn-pause").textContent="⏸"; lastTime=0; lockScreen(); }
 }
 function gameOver(){
